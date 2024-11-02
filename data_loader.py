@@ -18,12 +18,11 @@ from scipy.stats import linregress
 from datetime import datetime, timedelta
 from feature_generator import TAEngine
 import warnings
-from binance.client import Client
-
+#from binance.client import Client
 warnings.filterwarnings("ignore")
 
 class DataEngine:
-	def __init__(self, history_to_use, data_granularity_minutes, is_save_dict, is_load_dict, dict_path, min_volume_filter, is_test, future_bars_for_testing, volatility_filter, stocks_list, data_source):
+	def __init__(self, history_to_use, data_granularity_minutes, is_save_dict, is_load_dict, dict_path, min_volume_filter, is_test, future_bars_for_testing, volatility_filter, stocks_list, data_source, START,END):
 		print("Data engine has been initialized...")
 		self.DATA_GRANULARITY_MINUTES = data_granularity_minutes
 		self.IS_SAVE_DICT = is_save_dict
@@ -34,6 +33,8 @@ class DataEngine:
 		self.IS_TEST = is_test
 		self.VOLATILITY_THRESHOLD = volatility_filter
 		self.DATA_SOURCE = data_source
+		self.start_time = START
+		self.end_time = END
 
 		# Stocks list
 		self.directory_path = str(os.path.dirname(os.path.abspath(__file__)))
@@ -53,7 +54,7 @@ class DataEngine:
 		self.stock_data_length = []
 		
 		# Create an instance of the Binance Client with no api key and no secret (api key and secret not required for the functionality needed for this script)
-		self.binance_client = Client("","")
+		#self.binance_client = Client("","")
 
 	def load_stocks_from_file(self):
 		"""
@@ -83,34 +84,14 @@ class DataEngine:
 		if self.DATA_GRANULARITY_MINUTES == 1:
 			period = "7d"
 		else:
-			period = "30d"
+			period = "1mo"
 
 		try:
-			# get crytpo price from Binance
-			if(self.DATA_SOURCE == 'binance'):
-				# Binance clients doesn't like 60m as an interval
-				if(self.DATA_GRANULARITY_MINUTES == 60):
-					interval = '1h'
-				else:
-					interval = str(self.DATA_GRANULARITY_MINUTES) + "m"
-				stock_prices = self.binance_client.get_klines(symbol=symbol, interval = interval)
-				# ensure that stock prices contains some data, otherwise the pandas operations below could fail
-				if len(stock_prices) == 0:
-					return [], [], True
-				# convert list to pandas dataframe
-				stock_prices = pd.DataFrame(stock_prices, columns=['Datetime', 'Open', 'High', 'Low', 'Close',
-                                             'Volume', 'close_time', 'quote_av', 'trades', 'tb_base_av', 'tb_quote_av', 'ignore'])
-				stock_prices['Datetime'] = stock_prices['Datetime'].astype(float)
-				stock_prices['Open'] = stock_prices['Open'].astype(float)
-				stock_prices['High'] = stock_prices['High'].astype(float)
-				stock_prices['Low'] = stock_prices['Low'].astype(float)
-				stock_prices['Close'] = stock_prices['Close'].astype(float)
-				stock_prices['Volume'] = stock_prices['Volume'].astype(float)
-			# get stock prices from yahoo finance
-			else:
-				stock_prices = yf.download(
+			stock_prices = yf.download(
 								tickers = symbol,
-								period = period,
+								start= self.start_time,
+								end = self.end_time,
+								# period = period,
 								interval = str(self.DATA_GRANULARITY_MINUTES) + "m",
 								auto_adjust = False,
 								progress=False)
@@ -234,7 +215,6 @@ class DataEngine:
 			symbol_names.append(symbol)
 			historical_price_info.append(current_prices)
 			future_price_info.append(future_prices)
-
 		# Sometimes, there are some errors in feature generation or price extraction, let us remove that stuff
 		features, historical_price_info, future_price_info, symbol_names = self.remove_bad_data(features, historical_price_info, future_price_info, symbol_names)
 
@@ -245,9 +225,10 @@ class DataEngine:
 		Remove bad data i.e data that had some errors while scraping or feature generation
 		"""
 		length_dictionary = collections.Counter([len(feature) for feature in features])
+	
 		length_dictionary = list(length_dictionary.keys())
-		most_common_length = length_dictionary[0]
 
+		most_common_length = length_dictionary[0]
 		filtered_features, filtered_historical_price, filtered_future_prices, filtered_symbols = [], [], [], []
 		for i in range(0, len(features)):
 			if len(features[i]) == most_common_length:

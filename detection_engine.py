@@ -1,4 +1,4 @@
- # Basic libraries
+#%% 
 import os
 import ta
 import sys
@@ -19,32 +19,65 @@ import matplotlib.pyplot as plt
 from sklearn.ensemble import IsolationForest
 from data_loader import DataEngine
 import warnings
-
+import shap
 warnings.filterwarnings("ignore")
 
 # Styling for plots
-plt.style.use('seaborn-white')
+# plt.style.use('seaborn-white')
 plt.rc('grid', linestyle="dotted", color='#a0a0a0')
 plt.rcParams['axes.edgecolor'] = "#04383F"
 
 # Argument parsing
 import argparse
-argParser = argparse.ArgumentParser()
-argParser.add_argument("--top_n", type=int, default = 25, help="How many top predictions do you want to print")
-argParser.add_argument("--min_volume", type=int, default = 5000, help="Minimum volume filter. Stocks with average volume of less than this value will be ignored")
-argParser.add_argument("--history_to_use", type=int, default = 7, help="How many bars of 1 hour do you want to use for the anomaly detection model.")
-argParser.add_argument("--is_load_from_dictionary", type=int, default = 0, help="Whether to load data from dictionary or get it from data source.")
-argParser.add_argument("--data_dictionary_path", type=str, default = "dictionaries/data_dictionary.npy", help="Data dictionary path.")
-argParser.add_argument("--is_save_dictionary", type=int, default = 1, help="Whether to save data in a dictionary.")
-argParser.add_argument("--data_granularity_minutes", type=int, default = 15, help="Minute level data granularity that you want to use. Default is 60 minute bars.")
-argParser.add_argument("--is_test", type=int, default = 0, help="Whether to test the tool or just predict for future. When testing, you should set the future_bars to larger than 1.")
-argParser.add_argument("--future_bars", type=int, default = 25, help="How many bars to keep for testing purposes.")
-argParser.add_argument("--volatility_filter", type=float, default = 0.05, help="Stocks with volatility less than this value will be ignored.")
-argParser.add_argument("--output_format", type=str, default = "CLI", help="What format to use for printing/storing results. Can be CLI or JSON.")
-argParser.add_argument("--stock_list", type=str, default = "stocks.txt", help="What is the name of the file in the stocks directory which contains the stocks you wish to predict.")
-argParser.add_argument("--data_source", type=str, default = "yahoo_finance", help="The name of the data engine to use.")
+def get_args():
+    """
+    Function to handle argument parsing. If run in Jupyter Notebook or other
+    environments, return a simulated args object with default values.
+    """
+    try:
+        # Try parsing arguments from the command line
+        argParser = argparse.ArgumentParser()
+        argParser.add_argument("--top_n", type=int, default=2, help="How many top predictions do you want to print")
+        argParser.add_argument("--min_volume", type=int, default=5000, help="Minimum volume filter. Stocks with average volume of less than this value will be ignored")
+        argParser.add_argument("--history_to_use", type=int, default=7, help="How many bars of 1 hour do you want to use for the anomaly detection model.")
+        argParser.add_argument("--is_load_from_dictionary", type=int, default=0, help="Whether to load data from dictionary or get it from data source.")
+        argParser.add_argument("--data_dictionary_path", type=str, default="dictionaries/data_dictionary.npy", help="Data dictionary path.")
+        argParser.add_argument("--is_save_dictionary", type=int, default=1, help="Whether to save data in a dictionary.")
+        argParser.add_argument("--data_granularity_minutes", type=int, default=60, help="Minute level data granularity that you want to use. Default is 60 minute bars.")
+        argParser.add_argument("--is_test", type=int, default=0, help="Whether to test the tool or just predict for future. When testing, you should set the future_bars to larger than 1.")
+        argParser.add_argument("--future_bars", type=int, default=25, help="How many bars to keep for testing purposes.")
+        argParser.add_argument("--volatility_filter", type=float, default=0.05, help="Stocks with volatility less than this value will be ignored.")
+        argParser.add_argument("--output_format", type=str, default="CLI", help="What format to use for printing/storing results. Can be CLI or JSON.")
+        argParser.add_argument("--stock_list", type=str, default="stocks.txt", help="What is the name of the file in the stocks directory which contains the stocks you wish to predict.")
+        argParser.add_argument("--data_source", type=str, default="yahoo_finance", help="The name of the data engine to use.")
+        
+        # If running in a non-interactive environment, use argparse
+        return argParser.parse_args()
 
-args = argParser.parse_args()
+    except:
+        # For Jupyter, we simulate the args
+        class Args:
+            def __init__(self):
+                self.top_n = 2
+                self.min_volume = 5000
+                self.history_to_use = 7
+                self.is_load_from_dictionary = 0
+                self.data_dictionary_path = "dictionaries/data_dictionary.npy"
+                self.is_save_dictionary = 1
+                self.data_granularity_minutes = 60
+                self.is_test = 0
+                self.future_bars = 25
+                self.volatility_filter = 0.05
+                self.output_format = "CLI"
+                self.stock_list = "stocks.txt"
+                self.data_source = "yahoo_finance"
+        
+        return Args()
+
+# Get arguments (either from argparse or manually set in Jupyter)
+args = get_args()
+
+# args = argParser.parse_args()
 top_n = args.top_n
 min_volume = args.min_volume
 history_to_use = args.history_to_use
@@ -88,12 +121,12 @@ class ArgChecker:
 		if not path.exists(directory_path + f'/stocks/{stock_list}'):
 			print("The stocks list file must exist in the stocks directory")
 			exit()
-		if data_source not in ['binance', 'yahoo_finance']:
+		if data_source not in ['yahoo_finance']:
 			print("Data source must be a valid and supported service.")
 			exit()
 
 class Surpriver:
-	def __init__(self):
+	def __init__(self,START,END):
 		print("Surpriver has been initialized...")
 		self.TOP_PREDICTIONS_TO_PRINT = top_n
 		self.HISTORY_TO_USE = history_to_use
@@ -108,6 +141,8 @@ class Surpriver:
 		self.OUTPUT_FORMAT = output_format
 		self.STOCK_LIST = stock_list
 		self.DATA_SOURCE = data_source
+		self.start_time = START
+		self.end_time = END
 
 		# Create data engine
 		self.dataEngine = DataEngine(self.HISTORY_TO_USE, self.DATA_GRANULARITY_MINUTES, 
@@ -115,14 +150,9 @@ class Surpriver:
 							self.MINIMUM_VOLUME,
 							self.IS_TEST, self.FUTURE_BARS_FOR_TESTING,
 							self.VOLATILITY_FILTER,
-							self.STOCK_LIST,
-							self.DATA_SOURCE)
+							self.STOCK_LIST, self.DATA_SOURCE,self.start_time,self.end_time)
 		
-
 	def is_nan(self, object):
-		"""
-		Checks if a value is null. 
-		"""
 		return object != object
 
 	def calculate_percentage_change(self, old, new):
@@ -166,8 +196,6 @@ class Surpriver:
 		today_volume = volume_by_date_dictionary[latest_date]
 		average_vol_last_five_days = np.mean([volume_by_date_dictionary[date] for date in all_dates[1:6]])
 		average_vol_last_twenty_days = np.mean([volume_by_date_dictionary[date] for date in all_dates[1:20]])
-
-		
 		return latest_data_point, self.parse_large_values(today_volume), self.parse_large_values(average_vol_last_five_days), self.parse_large_values(average_vol_last_twenty_days)
 
 	def calculate_recent_volatility(self, historical_price):
@@ -185,11 +213,8 @@ class Surpriver:
 		total_sum_percentage_change = abs(sum([self.calculate_percentage_change(price_at_alert, next_price) for next_price in prices_in_future]))
 		future_volatility = np.std(prices_in_future)
 		return total_sum_percentage_change, future_volatility
-
+	
 	def find_anomalies(self):
-		"""
-		Main function that does everything
-		"""
 
 		# Gather data for all stocks
 		if self.IS_LOAD_FROM_DICTIONARY == 0:
@@ -199,21 +224,25 @@ class Surpriver:
 			features, historical_price_info, future_prices, symbol_names = self.dataEngine.load_data_from_dictionary()
 		
 		# Find anomalous stocks using the Isolation Forest model. Read more about the model at -> https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.IsolationForest.html
+		# Parameter contamination = x could set x*100 percent of data as outlier
+		# random_state = 0
 		detector = IsolationForest(n_estimators = 100, random_state = 0)
 		detector.fit(features)
+		self.detector = detector
+		self.features = features
 		predictions = detector.decision_function(features)
-		
+
 		# Print top predictions with some statistics
 		predictions_with_output_data = [[predictions[i], symbol_names[i], historical_price_info[i], future_prices[i]] for i in range(0, len(predictions))]
 		predictions_with_output_data = list(sorted(predictions_with_output_data))
-
+		
 		#Results object for storing results in JSON format
 		results = []
 
 		for item in predictions_with_output_data[:self.TOP_PREDICTIONS_TO_PRINT]:
 			# Get some stats to print
+			
 			prediction, symbol, historical_price, future_price = item
-
 			# Check if future data is present or not
 			if self.IS_TEST == 1 and len(future_price) < 5:
 				print("No future data is present. Please make sure that you ran the prior command with is_test enabled or disable that command now. Exiting now...")
@@ -270,6 +299,12 @@ class Surpriver:
 
 		if self.IS_TEST == 1:
 			self.calculate_future_stats(predictions_with_output_data)
+		return predictions_with_output_data
+
+	def calculate_shape(self):
+		shap_values = shap.TreeExplainer(self.detector).shap_values(np.array(self.features))
+		return shap.summary_plot(shap_values, np.array(self.features))
+
 
 	def store_results(self, results):
 		"""
@@ -347,11 +382,11 @@ class Surpriver:
 		plt.show()
 
 
-# Check arguments
-argumentChecker = ArgChecker()
+# # Check arguments
+# argumentChecker = ArgChecker()
 
-# Create surpriver instance
-supriver = Surpriver()
+# # Create surpriver instance
+# supriver = Surpriver()
 
-# Generate predictions
-supriver.find_anomalies()
+# # Generate predictions
+# result = supriver.find_anomalies()
